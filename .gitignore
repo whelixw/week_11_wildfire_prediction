@@ -1,0 +1,10 @@
+# Large data artifacts (keep them out of git)
+data/*.parquet
+data/*.csv
+data/*.sqlite
+
+# Python env, cache, etc.
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
