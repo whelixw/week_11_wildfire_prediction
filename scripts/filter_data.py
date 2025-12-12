@@ -108,3 +108,4 @@ Index(['station_id', 'city_name', 'date', 'season', 'avg_temp_c', 'min_temp_c',
 
 
 print(df_cities.columns)
+
