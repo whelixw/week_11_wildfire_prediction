@@ -8,8 +8,9 @@ GeoPandas install works end-to-end without touching the heavier notebook:
 3. Spatially joining those stations to state polygons to compute counts
 4. Overlaying station points on the per-state choropleth for quick visual QA
 5. Plotting historical wildfire ignition points for context
-6. Buffering a sample ignition point and finding nearby stations
-7. Building a simple choropleth (station counts per state)
+6. Drawing 100 km station buffers and highlighting which wildfires fall inside them
+7. Buffering a sample ignition point and finding nearby stations
+8. Building a simple choropleth (station counts per state)
 
 Running the script will drop PNGs under ``artifacts/geopandas_demo`` and print a
 few textual summaries to the console so you can inspect the outputs quickly.
@@ -26,7 +27,7 @@ from shapely.geometry import Point
 
 ARTIFACT_DIR = Path("artifacts/geopandas_demo")
 CITIES_PATH = Path("shared_data/cities.csv")
-FIRE_PARQUET_PATH = Path("data/wildfires_fires.parquet")
+FIRE_PARQUET_PATH = Path("shared_data/wildfires_fires.parquet")
 USA_STATES_URL = (
     "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json"
 )
@@ -89,7 +90,7 @@ def plot_station_scatter(stations: gpd.GeoDataFrame, out_dir: Path) -> Path:
 
 
 def load_us_states() -> gpd.GeoDataFrame:
-    """Fetch US state boundaries (GeoJSON over HTTP, fallback to country outline)."""
+    """Fetch US state boundaries (GeoJSON over HTTP, fall    to country outline)."""
     try:
         states = gpd.read_file(USA_STATES_URL)
         # Normalize column names from the GeoJSON (varies on source revs)
@@ -194,7 +195,7 @@ def load_wildfire_points(max_points: int = 50000) -> gpd.GeoDataFrame:
     keep_cols = ["LATITUDE", "LONGITUDE"] + [c for c in optional_cols if c in fires.columns]
     fires = fires[keep_cols]
     if fires.empty:
-        raise ValueError("No wildfire coordinates found in data/wildfires_fires.parquet")
+        raise ValueError("No wildfire coordinates found in shared_data/wildfires_fires.parquet")
     if max_points and len(fires) > max_points:
         fires = fires.sample(n=max_points, random_state=42)
     gdf = gpd.GeoDataFrame(
@@ -216,6 +217,81 @@ def plot_wildfire_points(
     ax.set_axis_off()
     ax.set_title("Wildfire Ignitions (sample)")
     path = out_dir / "wildfire_points.png"
+    fig.tight_layout()
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
+
+
+def build_station_buffers(
+    stations: gpd.GeoDataFrame, radius_km: float = 100.0
+) -> Tuple[gpd.GeoDataFrame, object]:
+    """Return buffers in the equal-area CRS plus their unary union."""
+    if stations.empty:
+        raise ValueError("Station GeoDataFrame is empty; cannot build buffers")
+    stations_proj = stations.to_crs(USA_EQUAL_AREA)
+    buffers_proj = gpd.GeoDataFrame(
+        geometry=stations_proj.geometry.buffer(radius_km * 1000.0), crs=USA_EQUAL_AREA
+    )
+    buffer_union = buffers_proj.geometry.unary_union
+    return buffers_proj, buffer_union
+
+
+def plot_station_buffers_with_wildfires(
+    stations: gpd.GeoDataFrame,
+    fires: gpd.GeoDataFrame,
+    states: gpd.GeoDataFrame,
+    out_dir: Path,
+    radius_km: float = 100.0,
+) -> Path:
+    """Overlay station buffers and color wildfires by whether they fall inside."""
+    buffers_proj, buffer_union = build_station_buffers(stations, radius_km)
+    buffers = buffers_proj.to_crs(WGS84)
+
+    fires_proj = fires.to_crs(USA_EQUAL_AREA)
+    fires = fires.copy()
+    fires["within_buffer"] = fires_proj.geometry.within(buffer_union)
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    states.boundary.plot(ax=ax, color="lightgray", linewidth=0.5)
+    buffers.plot(ax=ax, color="royalblue", alpha=0.15, edgecolor="royalblue", linewidth=0.3)
+    station_ax = stations.plot(ax=ax, color="navy", markersize=4, alpha=0.6, label="Stations")
+
+    inside = fires[fires["within_buffer"]]
+    outside = fires[~fires["within_buffer"]]
+    outside_ax = outside.plot(
+        ax=ax,
+        markersize=2,
+        color="#bdbdbd",
+        alpha=0.4,
+        label="Wildfires outside buffer",
+    )
+    inside_ax = inside.plot(
+        ax=ax,
+        markersize=3,
+        color="#d7301f",
+        alpha=0.6,
+        label="Wildfires inside buffer",
+    )
+
+    ax.set_axis_off()
+    ax.set_title(f"Station Buffers (~{int(radius_km)} km) and Wildfires")
+
+    handles = []
+    labels = []
+    if hasattr(station_ax, "collections") and station_ax.collections:
+        handles.append(station_ax.collections[0])
+        labels.append("Stations")
+    if hasattr(outside_ax, "collections") and outside_ax.collections:
+        handles.append(outside_ax.collections[0])
+        labels.append("Wildfires outside buffer")
+    if hasattr(inside_ax, "collections") and inside_ax.collections:
+        handles.append(inside_ax.collections[0])
+        labels.append("Wildfires inside buffer")
+    if handles:
+        ax.legend(handles, labels, loc="lower left", frameon=True)
+
+    path = out_dir / "station_buffers_wildfires_overlay.png"
     fig.tight_layout()
     fig.savefig(path, dpi=200)
     plt.close(fig)
@@ -264,7 +340,18 @@ def plot_buffer_region(
     fig, ax = plt.subplots(figsize=(6, 6))
     buffer_gdf.plot(ax=ax, color="lightblue", alpha=0.3, edgecolor="steelblue")
     fire_point.plot(ax=ax, color="red", markersize=50, label="Ignition")
-    nearby_stations.plot(ax=ax, color="black", markersize=20, label="Stations")
+    if not nearby_stations.empty:
+        nearby_stations.plot(ax=ax, color="black", markersize=20, label="Stations")
+    else:
+        ax.text(
+            0.5,
+            0.05,
+            "No stations within buffer",
+            transform=ax.transAxes,
+            ha="center",
+            fontsize=10,
+            bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none"},
+        )
     ax.set_title("Stations within 50 km")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
@@ -287,16 +374,26 @@ def main() -> None:
     overlay_path = plot_overlay_counts_and_scatter(states_with_counts, stations, out_dir)
     try:
         fires = load_wildfire_points()
-        wildfire_points_path = plot_wildfire_points(fires, states, out_dir)
     except FileNotFoundError as missing_data_err:
         wildfire_points_path = None
+        buffer_overlay_path = None
         print(missing_data_err)
+    else:
+        wildfire_points_path = plot_wildfire_points(fires, states, out_dir)
+        buffer_overlay_path = plot_station_buffers_with_wildfires(stations, fires, states, out_dir)
     fire_point = sample_fire_point(stations)
     buffer_gdf, stations_in_buffer = buffer_fire_point(fire_point, stations)
     buffer_path = plot_buffer_region(fire_point, buffer_gdf, stations_in_buffer, out_dir)
 
     print("Artifacts written to:")
-    for path in (scatter_path, choropleth_path, overlay_path, wildfire_points_path, buffer_path):
+    for path in (
+        scatter_path,
+        choropleth_path,
+        overlay_path,
+        wildfire_points_path,
+        buffer_overlay_path,
+        buffer_path,
+    ):
         if path is not None:
             print(f" - {path}")
 

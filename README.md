@@ -14,7 +14,7 @@ This repository explores how historical weather patterns relate to daily wildfir
    - Outputs: `data/us_daily_weather_1992_2015.parquet`, `data/wildfires_fires.{csv,parquet}`
 - `shared_data/` – light-weight lookup tables (cities, countries, regional clusters) checked into source control for quick reference
 - `scripts/wildfires.ipynb` – end-to-end notebook for feature engineering, model training, and diagnostic visualizations (counts, area, and cause-specific classifiers), uses the light-weight tables
-- `scripts/geopandas_demo.py` – self-contained GeoPandas sanity check that loads station metadata, performs state joins/buffers, overlays station scatter atop the per-state choropleth, plots wildfire ignition points, and drops sample plots under `artifacts/geopandas_demo`
+- `scripts/geopandas_demo.py` – self-contained GeoPandas sanity check that loads station metadata, performs state joins/buffers, overlays station scatter atop the per-state choropleth, plots wildfire ignition points (including a 100 km buffer overlay that highlights fires within coverage), and drops sample plots under `artifacts/geopandas_demo`
 - `requirements.txt` – Python dependencies for both the script and notebook environments
 - `notes.txt` – running scratchpad with open analysis questions and visualization requests
 
